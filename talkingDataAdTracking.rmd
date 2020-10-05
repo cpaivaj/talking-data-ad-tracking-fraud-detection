@@ -1,0 +1,262 @@
+---
+title: "TalkingData AdTracking - Projeto do Curso 1 da Formação Cientista de Dados DSA"
+author: "Carlos Paiva"
+date: "03 de Outubro de 2020"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Detectar cliques fraudulentos em anúncios de app mobile
+
+Projeto da Formação Cientista de Dados da Data Science Academy.
+
+Este projeto serve para prever se um clique em anúncio é fraudulendo ou não.
+
+Entende-se como fraudulento quando clica no anúncio, mas não faz o download (is_attributed == 0)
+
+Dataset usado: https://www.kaggle.com/c/talkingdata-adtracking-fraud-detection/data?select=train_sample.csv
+
+## Carregando o dataset
+
+```{r coleta}
+# Coletando os dados
+dataset <- read.csv("train_sample.csv")
+```
+
+## Feature Selection e Feature Engineering
+
+```{r selecao}
+dataset.v1 <- dataset
+dataset.v1$attributed_time <- NULL
+
+# Agora quero dividir a click_time em duas colunas
+# click_date e click_time
+# click_date vai armazenar apenas data
+# click_hour vai armazenar apenas hora
+
+# Extraindo datas e convertendo para POSIXct
+dates <- as.POSIXct(dataset.v1$click_time)
+
+# Pegando datas
+dataset.v1$click_date <- format(dates, format = "%Y/%m/%d")
+
+# Pegando o dia da semana com base na data
+dataset.v1$click_weekday <- weekdays(as.Date(dataset.v1$click_date))
+
+# Pegando horas (apenas hora, estou ignorando os minutos e segundos)
+dataset.v1$click_hour <- as.numeric(format(dates, format = "%H"))
+
+# Vou remover o campo click_time pois já tenho os dados que preciso
+#   e não faz sentido manter dados duplicados
+dataset.v1$click_time <- NULL
+
+# Tranformando variáveis em fator
+dataset.v1$click_date <- as.factor(dataset.v1$click_date)
+
+# Função para agrupar as horas de acordo com MEUS parâmetros de partes do dia
+# Observação: Esses horários foram definidos por MIM, não quer dizer que precisem ser a regra geral
+# Manhã - De 5 até 12
+# Tarde - De 12 até 19
+# Noite - De 19 até 5
+group_day_part <- function(x){
+  if(x>5 && x<=12){
+    return("Manha")
+  }else if(x>12 && x<=19){
+    return("Tarde")
+  }else{
+    return("Noite")
+  }
+}
+
+# Armazenado as partes do dia em uma variável nova
+# Preciso usar o unlist() senão não vou conseguir converter para fator, pois após o lapply
+#   a variável fica do tipo list
+dataset.v1$day_part <- unlist(lapply(dataset.v1$click_hour, group_day_part))
+dataset.v1$day_part <- as.factor(dataset.v1$day_part)
+dataset.v1$click_weekday <- as.factor(dataset.v1$click_weekday)
+dataset.v1$is_attributed <- as.factor(dataset.v1$is_attributed)
+
+# Decidi remover as horas pois já tenho a informação que queria (parte do dia)
+dataset.v1$click_hour <- NULL
+
+head(dataset.v1)
+str(dataset.v1)
+```
+
+## Análise Exploratória
+
+```{r analisando}
+table(dataset.v1$is_attributed)
+# Como já era de se esperar, existem mais downloads NÃO efetuados
+
+table(dataset.v1$click_weekday)
+# Já nessa outra tabela, observa-se que existem menos ocorrências na segunda-feira
+# E maior numero de ocorrências na quarta
+# Indicando que com base nesses dados, e nas datas analisadas, o dia da semana que
+#   os anúncios são mais clicados são na quarta-feira
+
+library(ggplot2)
+ggplot(dataset.v1[dataset.v1$is_attributed == 0,], aes(x = click_weekday)) +
+  geom_bar() +
+  ggtitle("CLIQUES SEM DOWNLOAD por DIA DA SEMANA")
+
+ggplot(dataset.v1[dataset.v1$is_attributed == 0,], aes(x = day_part)) +
+  geom_bar() +
+ggtitle("CLIQUES SEM DOWNLOAD por PARTE DO DIA")
+
+ggplot(dataset.v1[dataset.v1$is_attributed == 0,], aes(x = day_part, fill = click_weekday)) +
+  labs(fill = "Dia da Semana") +
+  geom_bar() +
+  facet_grid(. ~ click_weekday) +
+  ylab("Cliques") +
+  xlab("Parte do Dia") +
+  ggtitle("Downloads por parte do dia e dia da semana")
+
+# Como podemos ver, na terça e quarta a noite ocorrem a maioria dos cliques
+# Sendo esse o período com maior chance de ocorrer alguma fraude (clique sem download)
+# Essa informação pode ajudar a empresa a se preparar para esses dias e períodos, além de permitir
+#   que outras estratégias sejam adotadas para melhorar os números de cliques nos outros dias da semana
+```
+
+## Balanceamento
+
+```{r balanceamento}
+table(dataset.v1$is_attributed)
+
+# Os dados estão desbalanceados
+# Balanceando os dados através de undersampling
+#   (diminuir os dados com maior quantidade com base nos dados de menor quantidade)
+
+# Separando as duas categorias de is_attributed (0 e 1)
+dataset.v1.0 <- dataset.v1[dataset.v1$is_attributed == 0,]
+dataset.v1.1 <- dataset.v1[dataset.v1$is_attributed == 1,]
+
+# Escolhendo os dados de forma randômica
+dataset.v1.0 <- dataset.v1.0[sample(1:nrow(dataset.v1.1)),]
+
+# Unindo os dois datasets
+dataset.v2 <- merge(dataset.v1.0, dataset.v1.1, all = T)
+
+head(dataset.v2)
+str(dataset.v2)
+table(dataset.v2$is_attributed)
+
+# São poucos dados mas agora não vai tender mais pra um dos lados
+```
+
+## Normalização
+
+```{r normalizar}
+# As variáveis estão com escala diferentes
+
+# Função para alterar a escala
+scale.features <- function(df, variables){
+  for (variable in variables){
+    df[[variable]] <- scale(df[[variable]], center=T, scale=T)
+  }
+  return(df)
+}
+
+# Normalizando as variáveis
+numeric.vars <- c('ip', 'app', 'device', 'os', 'channel')
+dataset.v2 <- scale.features(dataset.v2, numeric.vars)
+
+# Separando dados em treino (70%) e teste (30%)
+train_data <- dataset.v2[1:round(nrow(dataset.v2) * 0.7),]
+test_data <- dataset.v2[(round(nrow(dataset.v2) * 0.7)+1):(nrow(dataset.v2)),]
+```
+
+## Treinamento do Modelo
+
+```{r treinamento}
+library(randomForest)
+# Primeiramente estou criando o modelo usando todas as variáveis
+model.rf.v1 <- randomForest(is_attributed ~ .,
+                         data = train_data,
+                         ntree = 100,
+                         nodesize = 10)
+
+# Imprimindo resultado do treinamento v1
+print(model.rf.v1)
+```
+
+## Avaliação do modelo
+
+```{r avaliando}
+# Previsão usando dados de teste e gravando o resultado
+predict.rf <- data.frame(observado = test_data$is_attributed,
+                         previsto = predict(model.rf.v1, newdata = test_data))
+
+# Visualizando resultado
+head(predict.rf)
+
+# Criando a confusion matrix
+library(caret)
+confusionMatrix(predict.rf$observado, predict.rf$previsto)
+```
+
+## Otimizando o Modelo
+
+```{r otimizando}
+# Alterando variáveis usadas pelo modelo
+# Selecionando variáveis com randomForest
+variables.rf <- randomForest(is_attributed ~ .,
+                             data = dataset.v2,
+                             ntree = 100,
+                             nodesize = 10,
+                             importance = TRUE)
+# Visualizando resultado
+varImpPlot(variables.rf)
+
+# Recriando modelo com as variáveis mais importantes de acordo com o resultado acima
+model.rf.v2 <- randomForest(is_attributed ~ app
+                            + ip
+                            + channel
+                            + device
+                            + os,
+                            data = train_data,
+                            ntree = 100,
+                            nodesize = 10)
+
+# Imprimindo resultado do treinamento v2
+print(model.rf.v2)
+```
+
+## Avaliação do Modelo v2
+
+```{r avaliacao_v2}
+predict.rf.v2 <- data.frame(observado = test_data$is_attributed,
+                         previsto = predict(model.rf.v2, newdata = test_data))
+
+# Visualizando resultado
+View(predict.rf.v2)
+
+# Criando uma confusion matrix
+library(caret)
+confusionMatrix(predict.rf.v2$observado, predict.rf.v2$previsto)
+```
+
+### Como observado na confusion matrix acima, obtivemos uma melhora na acurácia, apenas alterando as variáveis usadas para o treinamento.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
