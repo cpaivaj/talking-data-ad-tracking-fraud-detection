@@ -5,3 +5,6 @@
 
 (pt-br)
 https://github.com/cpaivaj/talking-data-ad-tracking-fraud-detection/blob/main/talkingDataAdTracking.pdf
+
+### This is the dataset (kaggle)
+https://www.kaggle.com/c/talkingdata-adtracking-fraud-detection/data?select=train_sample.csv
